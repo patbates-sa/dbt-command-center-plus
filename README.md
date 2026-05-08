@@ -1,4 +1,4 @@
-# dbt Command Center
+# dbt Command Center Plus
 
 A standalone operations dashboard for dbt Cloud, powered entirely by dbt's public APIs. Monitor jobs, explore catalog assets, trace lineage, query the Semantic Layer, and more — all from a single interface.
 
