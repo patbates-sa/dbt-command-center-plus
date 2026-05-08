@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Search as SearchIcon } from "lucide-react";
-import { useAssets } from "@/lib/hooks";
+import { useAssets, useProjects, useEnvironments } from "@/lib/hooks";
 import type { AssetFilters } from "@/types";
 import type { ResourceType, FilterOption } from "@/types";
 import { FilterBar } from "@/components/shared/filter-bar";
@@ -32,11 +32,11 @@ const sortOptions: FilterOption[] = [
 const resourceTypeOptions: FilterOption[] = [
   { label: "Model", value: "model" },
   { label: "Source", value: "source" },
-  { label: "Exposure", value: "exposure" },
+  { label: "Semantic Model", value: "semantic_model" },
   { label: "Metric", value: "metric" },
-  { label: "Test", value: "test" },
   { label: "Seed", value: "seed" },
   { label: "Snapshot", value: "snapshot" },
+  { label: "Exposure", value: "exposure" },
 ];
 
 const materializationOptions: FilterOption[] = [
@@ -53,10 +53,36 @@ export default function CatalogPage() {
   // Filter state
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [projectId, setProjectId] = useState("all");
+  const [environmentId, setEnvironmentId] = useState("all");
   const [resourceType, setResourceType] = useState("all");
   const [tag, setTag] = useState("all");
   const [materialization, setMaterialization] = useState("all");
   const [sort, setSort] = useState<string>("recently_executed");
+
+  const { data: projects = [] } = useProjects();
+  const { data: allEnvironments = [] } = useEnvironments();
+
+  // Environments for the selected project (prefer deployment type)
+  const projectEnvironments = useMemo(() => {
+    if (projectId === "all") return [];
+    return allEnvironments
+      .filter((e) => e.projectId === projectId)
+      .sort((a, b) => {
+        // Deployment/production environments first
+        const rank = (t: string) => (t === "deployment" || t === "production" ? 0 : 1);
+        return rank(a.type) - rank(b.type);
+      });
+  }, [allEnvironments, projectId]);
+
+  // When project changes, auto-select its best environment
+  useEffect(() => {
+    if (projectId === "all") {
+      setEnvironmentId("all");
+    } else {
+      setEnvironmentId(projectEnvironments[0]?.id ?? "all");
+    }
+  }, [projectId, projectEnvironments]);
 
   // Debounce search input at 300ms
   useEffect(() => {
@@ -71,8 +97,9 @@ export default function CatalogPage() {
     if (resourceType !== "all") f.resourceType = resourceType as ResourceType;
     if (tag !== "all") f.tags = [tag];
     if (materialization !== "all") f.materialization = materialization;
+    if (environmentId !== "all") f.environmentId = environmentId;
     return f;
-  }, [debouncedSearch, resourceType, tag, materialization]);
+  }, [debouncedSearch, resourceType, tag, materialization, environmentId]);
 
   const { data: assets, isLoading, isError, error } = useAssets(filters);
 
@@ -145,6 +172,22 @@ export default function CatalogPage() {
         onSearchChange={setSearch}
         searchPlaceholder="Search assets by name, ID, or description..."
         filters={[
+          {
+            key: "project",
+            label: "Project",
+            options: projects.map((p) => ({ label: p.name, value: p.id })),
+            value: projectId,
+            onChange: setProjectId,
+          },
+          ...(projectEnvironments.length > 1
+            ? [{
+                key: "environment",
+                label: "Environment",
+                options: projectEnvironments.map((e) => ({ label: e.name, value: e.id })),
+                value: environmentId,
+                onChange: setEnvironmentId,
+              }]
+            : []),
           {
             key: "resourceType",
             label: "Resource Type",
@@ -233,6 +276,8 @@ export default function CatalogPage() {
             label: "Clear filters",
             onClick: () => {
               setSearch("");
+              setProjectId("all");
+              setEnvironmentId("all");
               setResourceType("all");
               setTag("all");
               setMaterialization("all");

@@ -21,30 +21,24 @@ interface ActivityFeedProps {
 }
 
 function getEventIcon(eventType: string) {
-  switch (eventType) {
-    case "run.started":
-    case "run.triggered":
-      return <Play className="h-3.5 w-3.5 text-blue-500" />;
-    case "run.completed":
-    case "run.success":
-      return <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />;
-    case "run.failed":
-    case "run.error":
-      return <XCircle className="h-3.5 w-3.5 text-red-500" />;
-    case "job.created":
-    case "job.updated":
-      return <Settings className="h-3.5 w-3.5 text-muted-foreground" />;
-    case "deploy":
-    case "deploy.completed":
-      return <GitBranch className="h-3.5 w-3.5 text-purple-500" />;
-    case "alert":
-    case "alert.triggered":
-      return <AlertCircle className="h-3.5 w-3.5 text-amber-500" />;
-    case "webhook.received":
-      return <Zap className="h-3.5 w-3.5 text-amber-500" />;
-    default:
-      return <Activity className="h-3.5 w-3.5 text-muted-foreground" />;
-  }
+  const t = eventType.toLowerCase();
+  if (t.includes("run") && (t.includes("start") || t.includes("trigger") || t.includes("queued")))
+    return <Play className="h-3.5 w-3.5 text-blue-500" />;
+  if (t.includes("run") && (t.includes("success") || t.includes("complet")))
+    return <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />;
+  if (t.includes("run") && (t.includes("fail") || t.includes("error")))
+    return <XCircle className="h-3.5 w-3.5 text-red-500" />;
+  if (t.includes("job"))
+    return <Settings className="h-3.5 w-3.5 text-muted-foreground" />;
+  if (t.includes("deploy") || t.includes("project") || t.includes("environment"))
+    return <GitBranch className="h-3.5 w-3.5 text-purple-500" />;
+  if (t.includes("alert"))
+    return <AlertCircle className="h-3.5 w-3.5 text-amber-500" />;
+  if (t.includes("webhook"))
+    return <Zap className="h-3.5 w-3.5 text-amber-500" />;
+  if (t.includes("login") || t.includes("token") || t.includes("jwt") || t.includes("auth"))
+    return <Settings className="h-3.5 w-3.5 text-muted-foreground" />;
+  return <Activity className="h-3.5 w-3.5 text-muted-foreground" />;
 }
 
 function getEventLink(event: DbtActivityEvent): string | null {

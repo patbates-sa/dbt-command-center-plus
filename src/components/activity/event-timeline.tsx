@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import type { DbtActivityEvent } from "@/types";
-import { formatRelativeTime } from "@/lib/utils/format";
+import { formatRelativeTime, formatDuration } from "@/lib/utils/format";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils/cn";
@@ -14,6 +15,9 @@ import {
   Bell,
   Webhook,
   User,
+  Clock,
+  GitBranch,
+  ExternalLink,
   type LucideIcon,
 } from "lucide-react";
 
@@ -45,6 +49,11 @@ const EVENT_CONFIG: Record<
     icon: Play,
     color: "text-blue-600 dark:text-blue-400",
     dotColor: "bg-blue-500",
+  },
+  run_cancelled: {
+    icon: XCircle,
+    color: "text-zinc-500",
+    dotColor: "bg-zinc-400",
   },
   config_change: {
     icon: Settings,
@@ -149,24 +158,62 @@ export function EventTimeline({ events, className }: EventTimelineProps) {
                         )}
                       </div>
 
-                      {/* Linked entities */}
-                      <div className="mt-1.5 flex items-center gap-2 flex-wrap">
-                        {event.projectId && (
-                          <span className="text-[10px] text-muted-foreground">
-                            Project: {event.projectId}
-                          </span>
-                        )}
-                        {event.jobId && (
-                          <span className="text-[10px] text-muted-foreground">
-                            Job: {event.jobId}
-                          </span>
-                        )}
-                        {event.runId && (
-                          <span className="text-[10px] text-muted-foreground">
-                            Run: {event.runId}
-                          </span>
-                        )}
-                      </div>
+                      {/* Run event detail */}
+                      {event.source === "run_event" && event.metadata && (
+                        <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 rounded-md bg-muted/40 px-3 py-2 text-xs">
+                          {event.metadata.duration != null && (
+                            <span className="flex items-center gap-1 text-muted-foreground">
+                              <Clock className="h-3 w-3" />
+                              {formatDuration(event.metadata.duration as number)}
+                            </span>
+                          )}
+                          {!!event.metadata.gitBranch && (
+                            <span className="flex items-center gap-1 text-muted-foreground">
+                              <GitBranch className="h-3 w-3" />
+                              {String(event.metadata.gitBranch)}
+                            </span>
+                          )}
+                          {event.jobId && (
+                            <Link
+                              href={`/jobs`}
+                              className="flex items-center gap-1 text-primary hover:underline"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              Job {event.jobId}
+                            </Link>
+                          )}
+                          {event.runId && (
+                            <Link
+                              href={`/runs/${event.runId}`}
+                              className="flex items-center gap-1 text-primary hover:underline"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              Run {event.runId}
+                            </Link>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Audit log linked entities */}
+                      {event.source !== "run_event" && (event.projectId || event.jobId || event.runId) && (
+                        <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+                          {event.projectId && (
+                            <span className="text-[10px] text-muted-foreground">
+                              Project: {event.projectId}
+                            </span>
+                          )}
+                          {event.jobId && (
+                            <span className="text-[10px] text-muted-foreground">
+                              Job: {event.jobId}
+                            </span>
+                          )}
+                          {event.runId && (
+                            <span className="text-[10px] text-muted-foreground">
+                              Run: {event.runId}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </CardContent>

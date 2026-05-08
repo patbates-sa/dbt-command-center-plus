@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   ReactFlow,
   Background,
@@ -13,6 +13,7 @@ import {
   type Edge,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import dagre from "@dagrejs/dagre";
 
 import {
   Search,
@@ -22,12 +23,14 @@ import {
   Crosshair,
   ShieldAlert,
   Zap,
+  Layers,
+  X,
 } from "lucide-react";
 import { useAssets, useLineage } from "@/lib/hooks";
 import type { ResourceType, LineageNode as LineageNodeType } from "@/types";
 import { cn } from "@/lib/utils/cn";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { SidePanel } from "@/components/shared/side-panel";
@@ -45,9 +48,9 @@ const nodeTypes = {
   lineageNode: LineageNode,
 };
 
-// ── Color map for minimap ────────────────────────────────────
+// ── Color map ────────────────────────────────────────────────
 
-const minimapColorMap: Record<ResourceType, string> = {
+const resourceTypeColors: Record<ResourceType, string> = {
   model: "#3b82f6",
   source: "#22c55e",
   exposure: "#a855f7",
@@ -58,109 +61,78 @@ const minimapColorMap: Record<ResourceType, string> = {
   snapshot: "#f59e0b",
 };
 
-// ── Layout helper (simple dagre-like layering) ───────────────
+// ── Legend ───────────────────────────────────────────────────
+
+const legendItems: { type: ResourceType; label: string }[] = [
+  { type: "model", label: "Model" },
+  { type: "source", label: "Source" },
+  { type: "semantic_model", label: "Semantic Model" },
+  { type: "metric", label: "Metric" },
+  { type: "seed", label: "Seed" },
+  { type: "snapshot", label: "Snapshot" },
+];
+
+function LineageLegend() {
+  return (
+    <div className="absolute bottom-3 left-3 z-10 rounded-md border bg-background/90 backdrop-blur-sm px-3 py-2 shadow-sm">
+      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Legend</p>
+      <div className="flex flex-col gap-1">
+        {legendItems.map(({ type, label }) => (
+          <div key={type} className="flex items-center gap-1.5">
+            <span
+              className="h-2.5 w-2.5 rounded-full shrink-0"
+              style={{ backgroundColor: resourceTypeColors[type] }}
+            />
+            <span className="text-[11px] text-foreground">{label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Layout via dagre ─────────────────────────────────────────
+
+const NODE_WIDTH = 220;
+const NODE_HEIGHT = 60;
 
 function layoutNodes(
   nodes: LineageNodeType[],
   edges: { source: string; target: string }[],
   rootId: string
 ): Node[] {
-  // Build adjacency
-  const children = new Map<string, string[]>();
-  const parents = new Map<string, string[]>();
-  for (const e of edges) {
-    if (!children.has(e.source)) children.set(e.source, []);
-    children.get(e.source)!.push(e.target);
-    if (!parents.has(e.target)) parents.set(e.target, []);
-    parents.get(e.target)!.push(e.source);
-  }
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: "LR", nodesep: 40, ranksep: 80, marginx: 20, marginy: 20 });
 
-  // Assign layers via BFS from root (both directions)
-  const layerMap = new Map<string, number>();
-  layerMap.set(rootId, 0);
-
-  // BFS upstream (negative layers)
-  const upQueue = [rootId];
-  const visited = new Set([rootId]);
-  while (upQueue.length > 0) {
-    const current = upQueue.shift()!;
-    const currentLayer = layerMap.get(current) ?? 0;
-    for (const p of parents.get(current) ?? []) {
-      if (!visited.has(p)) {
-        visited.add(p);
-        layerMap.set(p, currentLayer - 1);
-        upQueue.push(p);
-      }
-    }
-  }
-
-  // BFS downstream (positive layers)
-  const downQueue = [rootId];
-  const visited2 = new Set([rootId]);
-  while (downQueue.length > 0) {
-    const current = downQueue.shift()!;
-    const currentLayer = layerMap.get(current) ?? 0;
-    for (const c of children.get(current) ?? []) {
-      if (!visited2.has(c)) {
-        visited2.add(c);
-        layerMap.set(c, currentLayer + 1);
-        downQueue.push(c);
-      }
-    }
-  }
-
-  // Any remaining nodes not connected
   for (const n of nodes) {
-    if (!layerMap.has(n.uniqueId)) {
-      layerMap.set(n.uniqueId, 0);
-    }
+    g.setNode(n.uniqueId, { width: NODE_WIDTH, height: NODE_HEIGHT });
+  }
+  for (const e of edges) {
+    g.setEdge(e.source, e.target);
   }
 
-  // Group by layer
-  const layers = new Map<number, string[]>();
-  for (const [id, layer] of layerMap) {
-    if (!layers.has(layer)) layers.set(layer, []);
-    layers.get(layer)!.push(id);
-  }
+  dagre.layout(g);
 
-  const sortedLayers = Array.from(layers.keys()).sort((a, b) => a - b);
-  const minLayer = sortedLayers[0] ?? 0;
-
-  const xSpacing = 280;
-  const ySpacing = 80;
-
-  const nodeMap = new Map(nodes.map((n) => [n.uniqueId, n]));
-  const result: Node[] = [];
-
-  for (const layer of sortedLayers) {
-    const ids = layers.get(layer) ?? [];
-    const x = (layer - minLayer) * xSpacing;
-    const totalHeight = (ids.length - 1) * ySpacing;
-    const startY = -totalHeight / 2;
-
-    ids.forEach((id, idx) => {
-      const nodeData = nodeMap.get(id);
-      if (!nodeData) return;
-      result.push({
-        id: nodeData.uniqueId,
-        type: "lineageNode",
-        position: { x, y: startY + idx * ySpacing },
-        data: {
-          uniqueId: nodeData.uniqueId,
-          name: nodeData.name,
-          resourceType: nodeData.resourceType,
-          status: nodeData.status,
-          lastRunDuration: nodeData.lastRunDuration,
-          hasDescription: nodeData.hasDescription,
-          testCount: nodeData.testCount,
-          failingTestCount: nodeData.failingTestCount,
-          isRoot: nodeData.uniqueId === rootId,
-        } satisfies LineageNodeData,
-      });
-    });
-  }
-
-  return result;
+  return nodes.map((n) => {
+    const pos = g.node(n.uniqueId);
+    return {
+      id: n.uniqueId,
+      type: "lineageNode",
+      position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 },
+      data: {
+        uniqueId: n.uniqueId,
+        name: n.name,
+        resourceType: n.resourceType,
+        status: n.status,
+        lastRunDuration: n.lastRunDuration,
+        hasDescription: n.hasDescription,
+        testCount: n.testCount,
+        failingTestCount: n.failingTestCount,
+        isRoot: n.uniqueId === rootId,
+      } satisfies LineageNodeData,
+    };
+  });
 }
 
 // ── Resource type filter options ─────────────────────────────
@@ -168,11 +140,11 @@ function layoutNodes(
 const resourceTypeFilters: { type: ResourceType; label: string }[] = [
   { type: "model", label: "Models" },
   { type: "source", label: "Sources" },
-  { type: "exposure", label: "Exposures" },
+  { type: "semantic_model", label: "Semantic Models" },
   { type: "metric", label: "Metrics" },
   { type: "seed", label: "Seeds" },
   { type: "snapshot", label: "Snapshots" },
-  { type: "test", label: "Tests" },
+  { type: "exposure", label: "Exposures" },
 ];
 
 // ── Mode descriptions ────────────────────────────────────────
@@ -202,10 +174,11 @@ const modeConfig: Record<
 // ── Page Component ───────────────────────────────────────────
 
 export default function LineagePage() {
-  // Search state
+  // Asset combobox state
   const [assetSearch, setAssetSearch] = useState("");
   const [selectedAssetId, setSelectedAssetId] = useState("");
-  const [showDropdown, setShowDropdown] = useState(false);
+  const [comboOpen, setComboOpen] = useState(false);
+  const comboRef = useRef<HTMLDivElement>(null);
 
   // Controls
   const [depth, setDepth] = useState(3);
@@ -222,8 +195,8 @@ export default function LineagePage() {
   const [panelOpen, setPanelOpen] = useState(false);
 
   // React Flow state
-  const [flowNodes, setFlowNodes, onNodesChange] = useNodesState([]);
-  const [flowEdges, setFlowEdges, onEdgesChange] = useEdgesState([]);
+  const [flowNodes, setFlowNodes, onNodesChange] = useNodesState<Node>([]);
+  const [flowEdges, setFlowEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
   // Data
   const assetsQuery = useAssets();
@@ -233,18 +206,42 @@ export default function LineagePage() {
     mode !== "consumption" ? modeConfig[mode].direction : direction
   );
 
-  // Filtered assets for search dropdown
+  // Only types that participate in DAG lineage
+  const LINEAGE_TYPES = new Set<ResourceType>(["model", "source", "seed", "snapshot", "semantic_model", "metric"]);
+
+  // All lineage-eligible assets sorted alphabetically
+  const sortedAssets = useMemo(() => {
+    if (!assetsQuery.data) return [];
+    return [...assetsQuery.data]
+      .filter((a) => LINEAGE_TYPES.has(a.resourceType))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [assetsQuery.data]);
+
+  // Assets filtered by search query
   const filteredAssets = useMemo(() => {
-    if (!assetsQuery.data || !assetSearch) return [];
+    if (!assetSearch.trim()) return sortedAssets;
     const q = assetSearch.toLowerCase();
-    return assetsQuery.data
-      .filter(
-        (a) =>
-          a.name.toLowerCase().includes(q) ||
-          a.uniqueId.toLowerCase().includes(q)
-      )
-      .slice(0, 10);
-  }, [assetsQuery.data, assetSearch]);
+    return sortedAssets.filter(
+      (a) => a.name.toLowerCase().includes(q) || a.resourceType.includes(q)
+    );
+  }, [sortedAssets, assetSearch]);
+
+  // Label for the currently selected asset
+  const selectedAssetName = useMemo(
+    () => sortedAssets.find((a) => a.uniqueId === selectedAssetId)?.name ?? "",
+    [sortedAssets, selectedAssetId]
+  );
+
+  // Close combobox on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (comboRef.current && !comboRef.current.contains(e.target as globalThis.Node)) {
+        setComboOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   // Toggle resource type filter
   const toggleType = useCallback((type: ResourceType) => {
@@ -352,48 +349,68 @@ export default function LineagePage() {
       {/* Controls bar */}
       <Card>
         <CardContent className="p-4 space-y-4">
-          {/* Row 1: Search + depth + direction */}
+          {/* Row 1: Asset combobox + depth + direction */}
           <div className="flex flex-wrap items-end gap-3">
-            {/* Asset search */}
-            <div className="relative w-72">
+            {/* Asset combobox */}
+            <div className="w-80" ref={comboRef}>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">
                 Starting Asset
               </label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                 <Input
-                  placeholder="Search for an asset..."
-                  value={assetSearch}
+                  placeholder={assetsQuery.isLoading ? "Loading assets…" : "Search assets…"}
+                  value={comboOpen ? assetSearch : selectedAssetName}
                   onChange={(e) => {
                     setAssetSearch(e.target.value);
-                    setShowDropdown(true);
+                    setComboOpen(true);
                   }}
-                  onFocus={() => setShowDropdown(true)}
-                  className="pl-9"
+                  onFocus={() => {
+                    setAssetSearch("");
+                    setComboOpen(true);
+                  }}
+                  className="pl-9 pr-8"
+                  disabled={assetsQuery.isLoading}
                 />
+                {selectedAssetId && !comboOpen && (
+                  <button
+                    type="button"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => { setSelectedAssetId(""); setAssetSearch(""); }}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                {comboOpen && (
+                  <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-lg max-h-72 overflow-y-auto">
+                    {filteredAssets.length === 0 ? (
+                      <p className="px-3 py-4 text-sm text-muted-foreground text-center">No assets found.</p>
+                    ) : (
+                      filteredAssets.map((a) => (
+                        <button
+                          key={a.uniqueId}
+                          type="button"
+                          className={cn(
+                            "flex items-center gap-2 w-full px-3 py-2 text-left text-sm hover:bg-accent transition-colors",
+                            a.uniqueId === selectedAssetId && "bg-accent"
+                          )}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setSelectedAssetId(a.uniqueId);
+                            setAssetSearch("");
+                            setComboOpen(false);
+                          }}
+                        >
+                          <span className="font-medium truncate flex-1">{a.name}</span>
+                          <span className="text-xs text-muted-foreground capitalize shrink-0">
+                            {a.resourceType.replace("_", " ")}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
-              {/* Dropdown */}
-              {showDropdown && filteredAssets.length > 0 && (
-                <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-lg max-h-60 overflow-y-auto">
-                  {filteredAssets.map((a) => (
-                    <button
-                      key={a.uniqueId}
-                      type="button"
-                      className="flex items-center gap-2 w-full px-3 py-2 text-left text-sm hover:bg-accent transition-colors"
-                      onClick={() => {
-                        setSelectedAssetId(a.uniqueId);
-                        setAssetSearch(a.name);
-                        setShowDropdown(false);
-                      }}
-                    >
-                      <span className="font-medium truncate">{a.name}</span>
-                      <span className="text-xs text-muted-foreground capitalize shrink-0">
-                        {a.resourceType.replace("_", " ")}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
 
             {/* Depth */}
@@ -515,9 +532,15 @@ export default function LineagePage() {
       {/* Graph area */}
       {!selectedAssetId ? (
         <EmptyState
-          icon={Search}
+          icon={Layers}
           title="Select a starting asset"
-          description="Use the search above to pick a dbt asset, then explore its lineage graph."
+          description="Choose a project and asset above to explore its lineage graph."
+        />
+      ) : lineageQuery.isError ? (
+        <EmptyState
+          icon={ShieldAlert}
+          title="Failed to load lineage"
+          description={(lineageQuery.error as Error)?.message ?? "An error occurred loading the lineage graph."}
         />
       ) : lineageQuery.isLoading ? (
         <Card>
@@ -532,7 +555,7 @@ export default function LineagePage() {
         </Card>
       ) : (
         <Card className="overflow-hidden">
-          <div className="h-[600px] w-full">
+          <div className="h-[600px] w-full relative">
             <ReactFlow
               nodes={flowNodes}
               edges={flowEdges}
@@ -541,7 +564,7 @@ export default function LineagePage() {
               onNodeClick={onNodeClick}
               nodeTypes={nodeTypes}
               fitView
-              fitViewOptions={{ padding: 0.2 }}
+              fitViewOptions={{ padding: 0.15 }}
               minZoom={0.1}
               maxZoom={2}
               proOptions={{ hideAttribution: true }}
@@ -551,12 +574,13 @@ export default function LineagePage() {
               <MiniMap
                 nodeColor={(node) => {
                   const data = node.data as unknown as LineageNodeData;
-                  return minimapColorMap[data.resourceType] ?? "#71717a";
+                  return resourceTypeColors[data.resourceType] ?? "#71717a";
                 }}
                 maskColor="rgba(0,0,0,0.1)"
                 className="!bg-background/80"
               />
             </ReactFlow>
+            <LineageLegend />
           </div>
         </Card>
       )}

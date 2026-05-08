@@ -25,10 +25,8 @@ interface GraphQLResponse<T = unknown> {
 // ─── Client ─────────────────────────────────────────────────
 
 export class DbtSemanticClient {
-  constructor(
-    private url: string,
-    private token: string,
-  ) {}
+  // eslint-disable-next-line @typescript-eslint/no-useless-constructor
+  constructor(_url: string, _token: string) {}
 
   // ── Private GraphQL transport ──
 
@@ -39,13 +37,9 @@ export class DbtSemanticClient {
     const tag = `[DbtSemanticClient] GraphQL query`;
     console.debug(tag, { variables });
 
-    const res = await fetch(this.url, {
+    const res = await fetch("/api/semantic-layer", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ query: gql, variables }),
     });
 
@@ -72,12 +66,10 @@ export class DbtSemanticClient {
     const gql = `
       query GetMetrics($environmentId: BigInt!) {
         metrics(environmentId: $environmentId) {
-          uniqueId
           name
           label
           description
           type
-          filter
           dimensions {
             name
             type
@@ -87,19 +79,35 @@ export class DbtSemanticClient {
             name
             type
           }
-          timeGrains
-          tags
-          meta
         }
       }
     `;
 
+    interface RawMetric {
+      name: string;
+      label: string | null;
+      description?: string;
+      type: string;
+      dimensions: Array<{ name: string; type: string; description?: string }>;
+      entities: Array<{ name: string; type: string }>;
+    }
+
     interface MetricsResponse {
-      metrics: DbtMetric[];
+      metrics: RawMetric[];
     }
 
     const data = await this.query<MetricsResponse>(gql, { environmentId });
-    return data.metrics;
+    return data.metrics.map((m) => ({
+      uniqueId: m.name,
+      name: m.name,
+      label: m.label ?? m.name,
+      description: m.description,
+      type: m.type.toLowerCase(),
+      dimensions: m.dimensions.map((d) => d.name),
+      entities: m.entities.map((e) => e.name),
+      timeGrains: [],
+      tags: [],
+    }));
   }
 
   // ── Dimensions for a specific metric ──

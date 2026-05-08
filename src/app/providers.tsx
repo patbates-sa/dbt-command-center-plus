@@ -5,9 +5,19 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PlatformProvider } from "@/lib/hooks/use-platform";
 import { PlatformService } from "@/lib/services/platform-service";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { getAppConfig } from "@/config/app";
+import type { AppConfig } from "@/types";
 
-export function Providers({ children }: { children: React.ReactNode }) {
+// Only non-sensitive fields are passed from the server component.
+// API credentials stay server-side; all dbt Cloud calls go through /api/* proxy routes.
+export type ProvidersConfig = Pick<AppConfig, "defaults">;
+
+export function Providers({
+  config,
+  children,
+}: {
+  config: ProvidersConfig;
+  children: React.ReactNode;
+}) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -21,10 +31,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
       }),
   );
 
-  const [platformService] = useState(() => {
-    const config = getAppConfig();
-    return new PlatformService(config);
-  });
+  const [platformService] = useState(() =>
+    new PlatformService({
+      dbtCloud: { baseUrl: "", accountId: "", apiToken: "" },
+      discoveryApi: { url: "" },
+      semanticLayer: { url: "", token: "" },
+      defaults: config.defaults,
+    }),
+  );
 
   return (
     <QueryClientProvider client={queryClient}>

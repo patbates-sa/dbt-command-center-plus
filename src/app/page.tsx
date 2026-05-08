@@ -36,17 +36,9 @@ export default function DashboardPage() {
   const assetsQuery = useAssets();
   const eventsQuery = useActivityEvents({ limit: 10 });
 
-  const isLoading =
-    dashboardQuery.isLoading ||
-    projectsQuery.isLoading ||
-    environmentsQuery.isLoading ||
-    runsQuery.isLoading;
+  const isLoading = projectsQuery.isLoading || environmentsQuery.isLoading;
 
-  const hasError =
-    dashboardQuery.isError ||
-    projectsQuery.isError ||
-    environmentsQuery.isError ||
-    runsQuery.isError;
+  const hasError = projectsQuery.isError && environmentsQuery.isError;
 
   // Compute KPI values
   const kpis = useMemo(() => {

@@ -6,8 +6,8 @@ A standalone operations dashboard for dbt Cloud, powered entirely by dbt's publi
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/<your-username>/dbt-command-center.git
-cd dbt-command-center
+git clone https://github.com/<your-username>/dbt-command-center-plus.git
+cd dbt-command-center-plus
 npm install
 
 # 2. Configure your dbt Cloud connection

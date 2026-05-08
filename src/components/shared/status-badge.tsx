@@ -34,6 +34,10 @@ const statusConfig: Record<
     label: "Skipped",
     className: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/20",
   },
+  reused: {
+    label: "Reused",
+    className: "bg-green-500/15 text-green-700 dark:text-green-400 border-green-500/20",
+  },
 };
 
 interface StatusBadgeProps {
@@ -41,8 +45,13 @@ interface StatusBadgeProps {
   className?: string;
 }
 
+const fallbackConfig = {
+  label: "Unknown",
+  className: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/20",
+};
+
 export function StatusBadge({ status, className }: StatusBadgeProps) {
-  const config = statusConfig[status];
+  const config = statusConfig[status] ?? fallbackConfig;
 
   return (
     <Badge variant="outline" className={cn(config.className, className)}>

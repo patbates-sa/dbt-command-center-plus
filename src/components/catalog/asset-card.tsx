@@ -57,9 +57,19 @@ export function AssetCard({ asset, className }: AssetCardProps) {
                 <h3 className="font-semibold text-sm truncate">
                   {asset.name}
                 </h3>
-                <span className="text-xs text-muted-foreground capitalize">
-                  {asset.resourceType.replace("_", " ")}
-                </span>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="text-xs text-muted-foreground capitalize">
+                    {asset.resourceType.replace("_", " ")}
+                  </span>
+                  {asset.materialization && (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] px-1.5 py-0 h-4 font-normal capitalize"
+                    >
+                      {asset.materialization.replace("_", " ")}
+                    </Badge>
+                  )}
+                </div>
               </div>
             </div>
             {asset.executionInfo?.lastRunStatus && (

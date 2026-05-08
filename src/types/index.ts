@@ -11,7 +11,8 @@ export type RunStatus =
   | "success"
   | "error"
   | "cancelled"
-  | "skipped";
+  | "skipped"
+  | "reused";
 
 export type ResourceType =
   | "model"
@@ -205,10 +206,17 @@ export interface DbtAsset {
   testCount: number;
   passingTestCount: number;
   failingTestCount: number;
+  tests?: Array<{ uniqueId: string; name: string; status?: string }>;
   // Documentation
   hasDescription: boolean;
   documentedColumns: number;
   totalColumns: number;
+  // Relationships (detail view only)
+  parentNodes?: Array<{ uniqueId: string; name: string; resourceType: string }>;
+  // Semantic model fields (detail view only)
+  measures?: Array<{ name: string; description?: string; agg?: string }>;
+  dimensions?: Array<{ name: string; description?: string; type?: string }>;
+  entities?: Array<{ name: string; description?: string; type?: string }>;
   // State
   definedInEnvironmentId?: string;
   appliedInEnvironmentId?: string;

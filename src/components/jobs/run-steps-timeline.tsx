@@ -14,6 +14,7 @@ interface RunStepsTimelineProps {
 
 const segmentColors: Record<RunStatus, string> = {
   success: "bg-green-500",
+  reused: "bg-green-500",
   error: "bg-red-500",
   running: "bg-blue-500 animate-pulse",
   queued: "bg-yellow-500",

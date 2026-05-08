@@ -171,6 +171,19 @@ export function useAssets(filters?: AssetFilters): UseQueryResult<DbtAsset[]> {
   });
 }
 
+export function useParentColumns(
+  parentNodes: Array<{ uniqueId: string; name: string; resourceType: string }> | undefined,
+  enabled: boolean,
+) {
+  const svc = usePlatformService();
+  return useQuery({
+    queryKey: ["parentColumns", parentNodes?.map((p) => p.uniqueId).sort()],
+    queryFn: () => svc.getParentColumns(parentNodes!),
+    enabled: enabled && !!parentNodes && parentNodes.length > 0,
+    staleTime: 120_000,
+  });
+}
+
 export function useAsset(uniqueId: string): UseQueryResult<DbtAsset | undefined> {
   const svc = usePlatformService();
   return useQuery({
@@ -231,6 +244,28 @@ export function useCapabilities(): UseQueryResult<DbtCapabilityMap> {
   return useQuery({
     queryKey: keys.capabilities,
     queryFn: () => svc.getCapabilities(),
+    staleTime: 300_000,
+  });
+}
+
+export interface RunResultNode {
+  unique_id: string;
+  status: string;
+  execution_time: number;
+  failures?: number | null;
+  message?: string | null;
+}
+
+export function useRunResults(runId: string) {
+  const svc = usePlatformService();
+  return useQuery({
+    queryKey: ["runResults", runId],
+    queryFn: async () => {
+      const raw = await svc.getArtifact(runId, "run_results.json");
+      const artifact = raw as { results?: RunResultNode[] };
+      return artifact.results ?? [];
+    },
+    enabled: !!runId,
     staleTime: 300_000,
   });
 }

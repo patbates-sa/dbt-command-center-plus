@@ -16,17 +16,27 @@ import {
   XCircle,
   Download,
   ExternalLink,
+  Search,
+  CircleDot,
+  CircleMinus,
+  ChevronRight,
+  GitBranch,
+  Loader2,
+  TrendingUp,
+  Layers,
 } from "lucide-react";
-import { useAsset, useLineage, useRuns, useArtifacts } from "@/lib/hooks";
+import { useAsset, useLineage, useRuns, useArtifacts, useParentColumns } from "@/lib/hooks";
+import { cn } from "@/lib/utils/cn";
 import {
   formatDuration,
   formatRelativeTime,
   formatPercent,
 } from "@/lib/utils/format";
-import type { DbtAsset, RunStatus } from "@/types";
+import type { DbtAsset } from "@/types";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceTypeIcon } from "@/components/shared/resource-type-icon";
@@ -219,6 +229,290 @@ function OverviewTab({ asset }: { asset: DbtAsset }) {
   );
 }
 
+// ── Column Lineage ───────────────────────────────────────────
+
+function ColumnLineagePanel({
+  asset,
+  columnName,
+}: {
+  asset: DbtAsset;
+  columnName: string;
+}) {
+  const { data: parentData, isLoading } = useParentColumns(
+    asset.parentNodes,
+    true,
+  );
+
+  if (!asset.parentNodes || asset.parentNodes.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground italic">
+        No upstream models found for this asset.
+      </p>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        Loading upstream columns…
+      </div>
+    );
+  }
+
+  const colLower = columnName.toLowerCase();
+  const matches = (parentData ?? []).map((parent) => ({
+    ...parent,
+    matchedColumn: parent.columns.find((c) => c.name.toLowerCase() === colLower),
+  }));
+  const found = matches.filter((m) => m.matchedColumn);
+  const notFound = matches.filter((m) => !m.matchedColumn);
+
+  return (
+    <div className="space-y-2">
+      {found.length === 0 && (
+        <p className="text-xs text-muted-foreground italic">
+          Column <span className="font-mono">{colLower}</span> not found by name in any upstream model.
+          It may be derived or renamed in SQL.
+        </p>
+      )}
+      {found.map((m) => (
+        <Link key={m.uniqueId} href={`/catalog/${encodeURIComponent(m.uniqueId)}`}>
+          <div className="flex items-center gap-2 rounded-md border px-3 py-2 text-xs hover:bg-accent/50 transition-colors cursor-pointer">
+            <ResourceTypeIcon resourceType={m.resourceType as DbtAsset["resourceType"]} className="h-3.5 w-3.5 shrink-0" />
+            <span className="font-medium">{m.name}</span>
+            <span className="text-muted-foreground">·</span>
+            <span className="font-mono text-muted-foreground">{m.matchedColumn!.name.toLowerCase()}</span>
+            {m.matchedColumn!.type && (
+              <Badge variant="outline" className="ml-auto font-mono text-[10px] px-1.5 py-0">
+                {m.matchedColumn!.type}
+              </Badge>
+            )}
+          </div>
+        </Link>
+      ))}
+      {notFound.length > 0 && found.length > 0 && (
+        <p className="text-[10px] text-muted-foreground pt-1">
+          Not found in: {notFound.map((m) => m.name).join(", ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ── Columns Tab ──────────────────────────────────────────────
+
+const TEST_TYPE_LABELS: Record<string, { label: string; className: string }> = {
+  not_null:        { label: "not null",        className: "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20" },
+  unique:          { label: "unique",          className: "bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20" },
+  accepted_values: { label: "accepted values", className: "bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/20" },
+  relationships:   { label: "relationships",   className: "bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/20" },
+};
+
+function parseTestType(testName: string): string {
+  for (const prefix of ["not_null", "unique", "accepted_values", "relationships"]) {
+    if (testName.startsWith(prefix + "_")) return prefix;
+  }
+  return "custom";
+}
+
+function testsForColumn(
+  tests: Array<{ uniqueId: string; name: string }>,
+  modelName: string,
+  columnName: string,
+): Array<{ uniqueId: string; name: string; testType: string }> {
+  const colLower = columnName.toLowerCase();
+  const modelLower = modelName.toLowerCase();
+  return tests
+    .filter((t) => {
+      const n = t.name.toLowerCase();
+      return n.includes(`_${modelLower}_${colLower}`) || n.endsWith(`_${colLower}`);
+    })
+    .map((t) => ({ ...t, testType: parseTestType(t.name) }));
+}
+
+function ColumnsTab({ asset }: { asset: DbtAsset }) {
+  const [search, setSearch] = useState("");
+  const [expandedColumn, setExpandedColumn] = useState<string | null>(null);
+
+  const filtered = useMemo(() => {
+    if (!search) return asset.columns;
+    const q = search.toLowerCase();
+    return asset.columns.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        c.description?.toLowerCase().includes(q) ||
+        c.type?.toLowerCase().includes(q),
+    );
+  }, [asset.columns, search]);
+
+  const documented = asset.columns.filter((c) => !!c.description).length;
+
+  if (asset.columns.length === 0) {
+    return (
+      <EmptyState
+        icon={FileText}
+        title="No columns available"
+        description="Column metadata was not returned for this asset."
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Summary + search */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-4 text-sm text-muted-foreground">
+          <span>
+            <span className="font-medium text-foreground">{asset.columns.length}</span> columns
+          </span>
+          <span className="flex items-center gap-1">
+            <CircleDot className="h-3.5 w-3.5 text-green-500" />
+            <span className="text-green-600 dark:text-green-400 font-medium">{documented}</span> documented
+          </span>
+          <span className="flex items-center gap-1">
+            <CircleMinus className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="font-medium">{asset.columns.length - documented}</span> undocumented
+          </span>
+        </div>
+        <div className="relative w-64">
+          <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Filter columns..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-8 pl-8 text-xs"
+          />
+        </div>
+      </div>
+
+      {/* Column rows */}
+      <div className="rounded-md border divide-y">
+        {filtered.map((col) => {
+          const colTests = testsForColumn(
+            asset.tests ?? [],
+            asset.name,
+            col.name,
+          );
+          const isDocumented = !!col.description;
+          const metaEntries = Object.entries(col.meta ?? {}).filter(([, v]) => v != null);
+
+          const isExpanded = expandedColumn === col.name;
+
+          return (
+            <div key={col.name} className="transition-colors">
+              {/* Row: name + type + doc status */}
+              <div
+                className="p-4 hover:bg-muted/30 cursor-pointer"
+                onClick={() => setExpandedColumn(isExpanded ? null : col.name)}
+              >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <ChevronRight
+                    className={cn(
+                      "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+                      isExpanded && "rotate-90",
+                    )}
+                  />
+                  {isDocumented ? (
+                    <CircleDot className="h-3.5 w-3.5 shrink-0 text-green-500 mt-0.5" />
+                  ) : (
+                    <CircleMinus className="h-3.5 w-3.5 shrink-0 text-muted-foreground mt-0.5" />
+                  )}
+                  <span className="font-mono text-sm font-semibold tracking-tight">
+                    {col.name.toLowerCase()}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {col.type && (
+                    <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0">
+                      {col.type}
+                    </Badge>
+                  )}
+                </div>
+              </div>
+
+              {/* Description */}
+              <p className={cn(
+                "mt-1.5 text-xs ml-5 pl-0.5",
+                isDocumented
+                  ? "text-muted-foreground leading-relaxed"
+                  : "text-muted-foreground/50 italic"
+              )}>
+                {col.description ?? "No description"}
+              </p>
+
+              {/* Tests */}
+              {colTests.length > 0 && (
+                <div className="mt-2 ml-5 flex flex-wrap gap-1">
+                  {colTests.map((t) => {
+                    const config = TEST_TYPE_LABELS[t.testType] ?? {
+                      label: t.testType,
+                      className: "bg-zinc-500/10 text-zinc-600 border-zinc-500/20",
+                    };
+                    return (
+                      <Badge
+                        key={t.uniqueId}
+                        variant="outline"
+                        className={cn("text-[10px] px-1.5 py-0 h-4", config.className)}
+                      >
+                        <FlaskConical className="h-2.5 w-2.5 mr-1" />
+                        {config.label}
+                      </Badge>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Tags */}
+              {col.tags && col.tags.length > 0 && (
+                <div className="mt-2 ml-5 flex flex-wrap gap-1">
+                  {col.tags.map((tag) => (
+                    <Badge key={tag} variant="secondary" className="text-[10px] px-1.5 py-0 h-4">
+                      {tag}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+
+              {/* Meta */}
+              {metaEntries.length > 0 && (
+                <div className="mt-2 ml-5 flex flex-wrap gap-2">
+                  {metaEntries.map(([k, v]) => (
+                    <span key={k} className="text-[10px] text-muted-foreground">
+                      <span className="font-medium">{k}:</span> {String(v)}
+                    </span>
+                  ))}
+                </div>
+              )}
+              </div>{/* end hover div */}
+
+              {/* Column lineage panel */}
+              {isExpanded && (
+                <div className="px-4 pb-4 ml-8 border-t bg-muted/20">
+                  <div className="pt-3">
+                    <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5 mb-2">
+                      <GitBranch className="h-3 w-3" />
+                      Upstream column lineage
+                    </p>
+                    <ColumnLineagePanel asset={asset} columnName={col.name} />
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {filtered.length === 0 && (
+        <p className="text-sm text-muted-foreground text-center py-6">
+          No columns match &quot;{search}&quot;
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ── SQL Tab ──────────────────────────────────────────────────
 
 function SqlTab({ asset }: { asset: DbtAsset }) {
@@ -394,37 +688,13 @@ function LineageTab({ asset }: { asset: DbtAsset }) {
 // ── Tests Tab ────────────────────────────────────────────────
 
 function TestsTab({ asset }: { asset: DbtAsset }) {
-  // Generate test data from the asset's test counts
   const tests = useMemo(() => {
-    const items: {
-      name: string;
-      type: string;
-      status: RunStatus;
-    }[] = [];
-
-    const passingCount = asset.passingTestCount;
-    const failingCount = asset.failingTestCount;
-    const total = asset.testCount;
-
-    // Generate test items
-    const testNames = [
-      `not_null_${asset.name}_id`,
-      `unique_${asset.name}_id`,
-      `accepted_values_${asset.name}_status`,
-      `relationships_${asset.name}_customer_id`,
-      `not_null_${asset.name}_created_at`,
-    ];
-
-    for (let i = 0; i < total; i++) {
-      const isFailing = i >= passingCount;
-      items.push({
-        name: testNames[i % testNames.length] + (i >= testNames.length ? `_${i}` : ""),
-        type: i % 3 === 0 ? "data" : "schema",
-        status: isFailing ? "error" : "success",
-      });
-    }
-
-    return items;
+    return (asset.tests ?? []).map((t) => ({
+      uniqueId: t.uniqueId,
+      name: t.name,
+      testType: parseTestType(t.name),
+      status: t.status,
+    }));
   }, [asset]);
 
   if (tests.length === 0) {
@@ -439,26 +709,41 @@ function TestsTab({ asset }: { asset: DbtAsset }) {
 
   return (
     <div className="space-y-2">
-      {tests.map((test, idx) => (
-        <Card key={idx}>
-          <CardContent className="p-3 flex items-center justify-between">
-            <div className="flex items-center gap-3 min-w-0">
-              {test.status === "success" ? (
+      {tests.map((test) => {
+        const typeConfig = TEST_TYPE_LABELS[test.testType];
+        const isPassing = test.status === "pass" || test.status === "success" || test.status === "reused";
+        const isFailing = test.status === "fail" || test.status === "error";
+        return (
+          <Card key={test.uniqueId}>
+            <CardContent className="p-3 flex items-center gap-3">
+              {isPassing ? (
                 <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
-              ) : (
+              ) : isFailing ? (
                 <XCircle className="h-4 w-4 text-red-500 shrink-0" />
+              ) : (
+                <FlaskConical className="h-4 w-4 text-muted-foreground shrink-0" />
               )}
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-mono truncate">{test.name}</p>
                 <p className="text-xs text-muted-foreground capitalize">
-                  {test.type} test
+                  {typeConfig?.label ?? test.testType} test
+                  {test.status === "warn" && (
+                    <span className="ml-1 text-yellow-500">· warn</span>
+                  )}
                 </p>
               </div>
-            </div>
-            <StatusBadge status={test.status} />
-          </CardContent>
-        </Card>
-      ))}
+              {typeConfig && (
+                <Badge
+                  variant="outline"
+                  className={cn("text-[10px] px-1.5 py-0 h-5 shrink-0", typeConfig.className)}
+                >
+                  {typeConfig.label}
+                </Badge>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })}
     </div>
   );
 }
@@ -747,6 +1032,137 @@ function RecommendationsTab({ asset }: { asset: DbtAsset }) {
   );
 }
 
+// ── Semantic Model Tab ───────────────────────────────────────
+
+function SemanticModelTab({ asset }: { asset: DbtAsset }) {
+  const measures = asset.measures ?? [];
+  const dimensions = asset.dimensions ?? [];
+  const entities = asset.entities ?? [];
+
+  const aggLabel = (agg?: string) =>
+    agg ? agg.toLowerCase().replace("_", " ") : "—";
+
+  const Section = ({
+    title,
+    icon: Icon,
+    items,
+    renderRow,
+  }: {
+    title: string;
+    icon: React.ElementType;
+    items: unknown[];
+    renderRow: (item: unknown, i: number) => React.ReactNode;
+  }) => (
+    <div>
+      <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+        <Icon className="h-4 w-4 text-muted-foreground" />
+        {title}
+        <Badge variant="secondary" className="ml-1 h-4 px-1.5 text-[10px]">{items.length}</Badge>
+      </h3>
+      {items.length === 0 ? (
+        <p className="text-sm text-muted-foreground italic">None defined.</p>
+      ) : (
+        <div className="rounded-md border divide-y">
+          {items.map((item, i) => renderRow(item, i))}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Upstream model */}
+      {asset.parentNodes && asset.parentNodes.length > 0 && (
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Built from</p>
+            <div className="flex flex-wrap gap-2">
+              {asset.parentNodes.map((p) => (
+                <Link key={p.uniqueId} href={`/catalog/${encodeURIComponent(p.uniqueId)}`}>
+                  <Badge variant="outline" className="gap-1.5 cursor-pointer hover:bg-accent">
+                    <ResourceTypeIcon resourceType={p.resourceType as import("@/types").ResourceType} className="h-3 w-3" />
+                    {p.name}
+                  </Badge>
+                </Link>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Section
+        title="Measures"
+        icon={TrendingUp}
+        items={measures}
+        renderRow={(item) => {
+          const m = item as { name: string; description?: string; agg?: string };
+          return (
+            <div key={m.name} className="px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm font-medium flex-1">{m.name}</span>
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 shrink-0">
+                  {aggLabel(m.agg)}
+                </Badge>
+              </div>
+              {m.description && (
+                <p className="text-xs text-muted-foreground mt-0.5">{m.description}</p>
+              )}
+            </div>
+          );
+        }}
+      />
+
+      <Section
+        title="Dimensions"
+        icon={Layers}
+        items={dimensions}
+        renderRow={(item) => {
+          const d = item as { name: string; description?: string; type?: string };
+          return (
+            <div key={d.name} className="px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm font-medium flex-1">{d.name}</span>
+                {d.type && (
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 shrink-0 capitalize">
+                    {d.type}
+                  </Badge>
+                )}
+              </div>
+              {d.description && (
+                <p className="text-xs text-muted-foreground mt-0.5">{d.description}</p>
+              )}
+            </div>
+          );
+        }}
+      />
+
+      <Section
+        title="Entities"
+        icon={CircleDot}
+        items={entities}
+        renderRow={(item) => {
+          const e = item as { name: string; description?: string; type?: string };
+          return (
+            <div key={e.name} className="px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm font-medium flex-1">{e.name}</span>
+                {e.type && (
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 shrink-0 capitalize">
+                    {e.type}
+                  </Badge>
+                )}
+              </div>
+              {e.description && (
+                <p className="text-xs text-muted-foreground mt-0.5">{e.description}</p>
+              )}
+            </div>
+          );
+        }}
+      />
+    </div>
+  );
+}
+
 // ── Main Page ────────────────────────────────────────────────
 
 export default function AssetDetailPage() {
@@ -832,49 +1248,56 @@ export default function AssetDetailPage() {
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="overview">
-        <TabsList className="flex-wrap">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="sql">SQL</TabsTrigger>
-          <TabsTrigger value="lineage">Lineage</TabsTrigger>
-          <TabsTrigger value="tests">
-            Tests
-            {asset.failingTestCount > 0 && (
-              <Badge
-                variant="destructive"
-                className="ml-1.5 h-4 min-w-4 text-[10px] px-1"
-              >
-                {asset.failingTestCount}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="execution">Execution History</TabsTrigger>
-          <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
-          <TabsTrigger value="recommendations">Recommendations</TabsTrigger>
-        </TabsList>
+      {asset.resourceType === "semantic_model" ? (
+        <Tabs defaultValue="semantic">
+          <TabsList className="flex-wrap">
+            <TabsTrigger value="semantic">Semantic Definition</TabsTrigger>
+            <TabsTrigger value="lineage">Lineage</TabsTrigger>
+          </TabsList>
+          <TabsContent value="semantic">
+            <SemanticModelTab asset={asset} />
+          </TabsContent>
+          <TabsContent value="lineage">
+            <LineageTab asset={asset} />
+          </TabsContent>
+        </Tabs>
+      ) : (
+        <Tabs defaultValue="overview">
+          <TabsList className="flex-wrap">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="columns">
+              Columns
+              {asset.columns.length > 0 && (
+                <Badge variant="secondary" className="ml-1.5 h-4 min-w-4 text-[10px] px-1">
+                  {asset.columns.length}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="sql">SQL</TabsTrigger>
+            <TabsTrigger value="lineage">Lineage</TabsTrigger>
+            <TabsTrigger value="tests">
+              Tests
+              {asset.failingTestCount > 0 && (
+                <Badge variant="destructive" className="ml-1.5 h-4 min-w-4 text-[10px] px-1">
+                  {asset.failingTestCount}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="execution">Execution History</TabsTrigger>
+            <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
+            <TabsTrigger value="recommendations">Recommendations</TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="overview">
-          <OverviewTab asset={asset} />
-        </TabsContent>
-        <TabsContent value="sql">
-          <SqlTab asset={asset} />
-        </TabsContent>
-        <TabsContent value="lineage">
-          <LineageTab asset={asset} />
-        </TabsContent>
-        <TabsContent value="tests">
-          <TestsTab asset={asset} />
-        </TabsContent>
-        <TabsContent value="execution">
-          <ExecutionHistoryTab asset={asset} />
-        </TabsContent>
-        <TabsContent value="artifacts">
-          <ArtifactsTab asset={asset} />
-        </TabsContent>
-        <TabsContent value="recommendations">
-          <RecommendationsTab asset={asset} />
-        </TabsContent>
-      </Tabs>
+          <TabsContent value="overview"><OverviewTab asset={asset} /></TabsContent>
+          <TabsContent value="columns"><ColumnsTab asset={asset} /></TabsContent>
+          <TabsContent value="sql"><SqlTab asset={asset} /></TabsContent>
+          <TabsContent value="lineage"><LineageTab asset={asset} /></TabsContent>
+          <TabsContent value="tests"><TestsTab asset={asset} /></TabsContent>
+          <TabsContent value="execution"><ExecutionHistoryTab asset={asset} /></TabsContent>
+          <TabsContent value="artifacts"><ArtifactsTab asset={asset} /></TabsContent>
+          <TabsContent value="recommendations"><RecommendationsTab asset={asset} /></TabsContent>
+        </Tabs>
+      )}
 
       {/* API Surface Callout */}
       <ApiSurfaceCallout

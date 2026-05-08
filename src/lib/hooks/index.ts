@@ -18,4 +18,7 @@ export {
   useTriggerRun,
   useCancelRun,
   useArtifacts,
+  useRunResults,
+  useParentColumns,
+  type RunResultNode,
 } from "./use-platform";
