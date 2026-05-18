@@ -23,6 +23,31 @@ export function getAppConfig(): AppConfig {
     webhook: process.env.DBT_WEBHOOK_SECRET
       ? { secret: process.env.DBT_WEBHOOK_SECRET }
       : undefined,
+    jiraMcp: process.env.JIRA_MCP_COMMAND
+      ? {
+          command: process.env.JIRA_MCP_COMMAND,
+          args: (process.env.JIRA_MCP_ARGS || "")
+            .split(/\s+/)
+            .filter(Boolean),
+          env: {
+            ...(process.env.JIRA_URL && { JIRA_URL: process.env.JIRA_URL }),
+            ...(process.env.JIRA_USERNAME && {
+              JIRA_USERNAME: process.env.JIRA_USERNAME,
+            }),
+            ...(process.env.JIRA_API_TOKEN && {
+              JIRA_API_TOKEN: process.env.JIRA_API_TOKEN,
+            }),
+            ...(process.env.JIRA_PERSONAL_TOKEN && {
+              JIRA_PERSONAL_TOKEN: process.env.JIRA_PERSONAL_TOKEN,
+            }),
+          },
+          toolName: process.env.JIRA_MCP_TOOL_NAME || "jira_search",
+          defaultJql:
+            process.env.JIRA_DEFAULT_JQL ||
+            "assignee = currentUser() ORDER BY updated DESC",
+        }
+      : undefined,
+    dbtProjectRoot: process.env.DBT_PROJECT_ROOT || undefined,
   };
 }
 
@@ -41,5 +66,6 @@ export function detectCapabilities(config: AppConfig): DbtCapabilityMap {
     jobTriggers: !!config.dbtCloud.apiToken,
     artifacts: !!config.dbtCloud.apiToken,
     stateComparison: !!config.discoveryApi.url,
+    jira: !!config.jiraMcp?.command,
   };
 }

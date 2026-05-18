@@ -307,9 +307,12 @@ export class DbtDiscoveryClient {
   ): Promise<DbtAsset | null> {
     const prefix = uniqueId.split(".")[0];
 
-    // Semantic models live in definition state, not applied — handle separately
+    // Semantic models and metrics live in definition state, not applied — handle separately
     if (prefix === "semantic_model") {
       return this.getSemanticModelAsset(environmentId, uniqueId);
+    }
+    if (prefix === "metric") {
+      return this.getMetricAsset(environmentId, uniqueId);
     }
 
     const typeFieldMap: Record<string, string> = {
@@ -318,7 +321,6 @@ export class DbtDiscoveryClient {
       seed: "seeds",
       snapshot: "snapshots",
       exposure: "exposures",
-      metric: "metrics",
       test: "tests",
     };
     const fieldName = typeFieldMap[prefix] ?? "models";
@@ -527,6 +529,71 @@ export class DbtDiscoveryClient {
       measures: node.measures?.map((m) => ({ name: m.name, description: m.description ?? undefined, agg: m.agg })),
       dimensions: node.dimensions?.map((d) => ({ name: d.name, description: d.description ?? undefined, type: d.type })),
       entities: node.entities?.map((e) => ({ name: e.name, description: e.description ?? undefined, type: e.type })),
+    };
+  }
+
+  // ── Metric detail (definition state) ──
+
+  private async getMetricAsset(
+    environmentId: string,
+    uniqueId: string,
+  ): Promise<DbtAsset | null> {
+    const gql = `
+      query GetMetric($environmentId: BigInt!) {
+        environment(id: $environmentId) {
+          definition {
+            metrics(first: 200) {
+              edges { node {
+                uniqueId name resourceType description
+                parents { uniqueId name resourceType }
+              } }
+            }
+          }
+        }
+      }
+    `;
+
+    interface RawParent { uniqueId: string; name: string; resourceType: string }
+    interface RawMetricNode {
+      uniqueId: string; name: string; resourceType: string;
+      description?: string | null;
+      parents?: RawParent[];
+    }
+    interface MetricResponse {
+      environment: { definition: { metrics: { edges: Array<{ node: RawMetricNode }> } } }
+    }
+
+    const data = await this.query<MetricResponse>(gql, { environmentId });
+    const all = data.environment.definition.metrics.edges;
+    const name = uniqueId.split(".").at(-1);
+    const match =
+      all.find((e) => e.node.uniqueId === uniqueId) ??
+      all.find((e) => e.node.name === name);
+    if (!match) return null;
+
+    const node = match.node;
+    return {
+      uniqueId: node.uniqueId,
+      name: node.name,
+      resourceType: "metric",
+      packageName: "",
+      description: node.description ?? undefined,
+      tags: [],
+      meta: {},
+      columns: [],
+      parentNodes: node.parents?.map((p) => ({
+        uniqueId: p.uniqueId,
+        name: p.name,
+        resourceType: p.resourceType,
+      })),
+      upstreamCount: node.parents?.length ?? 0,
+      downstreamCount: 0,
+      testCount: 0,
+      passingTestCount: 0,
+      failingTestCount: 0,
+      hasDescription: !!node.description,
+      documentedColumns: 0,
+      totalColumns: 0,
     };
   }
 

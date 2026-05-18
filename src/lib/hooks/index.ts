@@ -22,3 +22,5 @@ export {
   useParentColumns,
   type RunResultNode,
 } from "./use-platform";
+
+export { useJiraTickets } from "./use-jira";

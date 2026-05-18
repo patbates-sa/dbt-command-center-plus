@@ -12,7 +12,9 @@ import {
   Server,
   BarChart3,
   Activity,
+  Ticket,
   Settings,
+  ScrollText,
   PanelLeftClose,
   PanelLeft,
 } from "lucide-react";
@@ -36,7 +38,9 @@ const navItems = [
   { label: "Environments", icon: Server, href: "/environments" },
   { label: "Metrics", icon: BarChart3, href: "/metrics" },
   { label: "Activity", icon: Activity, href: "/activity" },
+  { label: "Jira Tickets", icon: Ticket, href: "/jira-tickets" },
   { label: "Setup", icon: Settings, href: "/setup" },
+  { label: "API Log", icon: ScrollText, href: "/api-log" },
 ] as const;
 
 interface AppShellProps {

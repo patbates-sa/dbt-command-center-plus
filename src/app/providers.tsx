@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PlatformProvider } from "@/lib/hooks/use-platform";
 import { PlatformService } from "@/lib/services/platform-service";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { installApiLogger } from "@/lib/api-log/store";
 import type { AppConfig } from "@/types";
 
 // Only non-sensitive fields are passed from the server component.
@@ -39,6 +40,10 @@ export function Providers({
       defaults: config.defaults,
     }),
   );
+
+  useEffect(() => {
+    installApiLogger();
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>

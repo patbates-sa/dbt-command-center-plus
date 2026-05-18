@@ -329,6 +329,7 @@ export interface DbtCapabilityMap {
   jobTriggers: boolean;
   artifacts: boolean;
   stateComparison: boolean;
+  jira: boolean;
 }
 
 // --- App Config ---
@@ -353,6 +354,31 @@ export interface AppConfig {
   webhook?: {
     secret: string;
   };
+  jiraMcp?: {
+    command: string;
+    args: string[];
+    env: Record<string, string>;
+    toolName: string;
+    defaultJql: string;
+  };
+  dbtProjectRoot?: string;
+}
+
+// --- Jira ---
+
+export interface JiraTicket {
+  key: string;
+  summary: string;
+  description?: string;
+  assignee?: string;
+  reporter?: string;
+  priority?: string;
+  status?: string;
+  resolution?: string;
+  created?: string;
+  updated?: string;
+  dueDate?: string;
+  url?: string;
 }
 
 // --- UI / View Models ---
