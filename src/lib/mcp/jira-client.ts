@@ -283,6 +283,51 @@ export async function updateJiraIssue(
   }
 }
 
+export async function createJiraIssue(args: {
+  projectKey: string;
+  summary: string;
+  description?: string;
+  issueType: string;
+  dueDate?: string;
+}): Promise<{ key: string }> {
+  const { jiraMcp } = getAppConfig();
+  if (!jiraMcp) throw new Error("Jira MCP is not configured.");
+  const client = await getClient();
+
+  const additionalFields: Record<string, unknown> = {};
+  if (args.dueDate) additionalFields.duedate = args.dueDate;
+
+  const callArgs: Record<string, unknown> = {
+    project_key: args.projectKey,
+    summary: args.summary,
+    issue_type: args.issueType,
+  };
+  if (args.description) callArgs.description = args.description;
+  if (Object.keys(additionalFields).length > 0) {
+    callArgs.additional_fields = JSON.stringify(additionalFields);
+  }
+
+  const result = await client.callTool({
+    name: "jira_create_issue",
+    arguments: callArgs,
+  });
+
+  if (
+    result &&
+    typeof result === "object" &&
+    (result as { isError?: boolean }).isError
+  ) {
+    throw new Error(extractText(result) || "Failed to create issue");
+  }
+
+  const parsed = safeParseJson(extractText(result));
+  const key = pickString(parsed, ["key"], ["issue", "key"]);
+  if (!key) {
+    throw new Error("Created issue but could not find issue key in response.");
+  }
+  return { key };
+}
+
 export async function addJiraComment(
   ticketKey: string,
   comment: string,

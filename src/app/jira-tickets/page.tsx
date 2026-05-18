@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
   ChevronDown,
+  Copy,
   ExternalLink,
   Loader2,
   Play,
@@ -51,7 +53,6 @@ type SortKey =
   | "reporter"
   | "priority"
   | "status"
-  | "resolution"
   | "created"
   | "updated"
   | "dueDate";
@@ -64,7 +65,6 @@ const COLUMNS: { id: SortKey; label: string; defaultDir: SortDir }[] = [
   { id: "reporter", label: "Reporter", defaultDir: "asc" },
   { id: "priority", label: "Priority", defaultDir: "asc" },
   { id: "status", label: "Status", defaultDir: "asc" },
-  { id: "resolution", label: "Resolution", defaultDir: "asc" },
   { id: "created", label: "Created", defaultDir: "desc" },
   { id: "updated", label: "Updated", defaultDir: "desc" },
   { id: "dueDate", label: "Due Date", defaultDir: "asc" },
@@ -85,6 +85,20 @@ function priorityRank(p?: string): number {
   return v === undefined ? Number.POSITIVE_INFINITY : v;
 }
 
+function formatDueDate(due?: string): string {
+  if (!due) return "—";
+  // Jira's `duedate` is a calendar date (YYYY-MM-DD). Parsing via `new Date()`
+  // treats it as UTC midnight, which renders as the previous day in any
+  // timezone west of UTC. Render the date as-is, in local calendar terms.
+  const ymd = due.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymd) {
+    const [, y, m, d] = ymd;
+    return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString();
+  }
+  const parsed = new Date(due);
+  return Number.isNaN(parsed.getTime()) ? due : parsed.toLocaleDateString();
+}
+
 function dateValue(d?: string): number {
   if (!d) return Number.POSITIVE_INFINITY;
   const t = Date.parse(d);
@@ -102,6 +116,59 @@ function compareStrings(a?: string, b?: string, dir: SortDir = "asc"): number {
     sensitivity: "base",
   });
   return dir === "asc" ? cmp : -cmp;
+}
+
+type ColumnKey = "select" | SortKey;
+
+const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
+  select: 40,
+  work: 360,
+  assignee: 140,
+  reporter: 140,
+  priority: 100,
+  status: 140,
+  created: 120,
+  updated: 120,
+  dueDate: 110,
+};
+
+const MIN_COLUMN_WIDTH = 60;
+const COLUMN_WIDTHS_STORAGE_KEY = "jira-tickets:colWidths";
+
+function ColumnResizer({
+  onResize,
+}: {
+  onResize: (delta: number) => void;
+}) {
+  const startXRef = useRef(0);
+
+  return (
+    <span
+      role="separator"
+      aria-orientation="vertical"
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        startXRef.current = e.clientX;
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+        const delta = e.clientX - startXRef.current;
+        if (delta !== 0) {
+          onResize(delta);
+          startXRef.current = e.clientX;
+        }
+      }}
+      onPointerUp={(e) => {
+        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        }
+      }}
+      onClick={(e) => e.stopPropagation()}
+      className="absolute top-0 right-0 z-10 h-full w-1.5 cursor-col-resize select-none hover:bg-primary/40 active:bg-primary/60"
+    />
+  );
 }
 
 function compareNumbers(a: number, b: number, dir: SortDir): number {
@@ -191,10 +258,10 @@ function TicketRow({
           className="h-3.5 w-3.5 cursor-pointer rounded border-input"
         />
       </td>
-      <td className="px-3 py-2.5 align-top">
+      <td className="overflow-hidden px-3 py-2.5 align-top">
         <Tooltip>
           <TooltipTrigger asChild>
-            <div className="flex flex-col gap-0.5 cursor-default">
+            <div className="flex min-w-0 flex-col gap-0.5 cursor-default">
               {ticket.url ? (
                 <a
                   href={ticket.url}
@@ -207,7 +274,9 @@ function TicketRow({
               ) : (
                 <span className="text-xs font-medium">{ticket.key}</span>
               )}
-              <span className="text-sm">{ticket.summary || "—"}</span>
+              <span className="block truncate text-sm">
+                {ticket.summary || "—"}
+              </span>
             </div>
           </TooltipTrigger>
           <TooltipContent
@@ -219,10 +288,10 @@ function TicketRow({
           </TooltipContent>
         </Tooltip>
       </td>
-      <td className="px-3 py-2.5 align-top text-sm">
+      <td className="truncate px-3 py-2.5 align-top text-sm">
         {ticket.assignee || "—"}
       </td>
-      <td className="px-3 py-2.5 align-top text-sm">
+      <td className="truncate px-3 py-2.5 align-top text-sm">
         {ticket.reporter || "—"}
       </td>
       <td className="px-3 py-2.5 align-top">
@@ -251,19 +320,14 @@ function TicketRow({
           )}
         </div>
       </td>
-      <td className="px-3 py-2.5 align-top text-sm text-muted-foreground">
-        {ticket.resolution || "—"}
-      </td>
-      <td className="px-3 py-2.5 align-top text-sm text-muted-foreground whitespace-nowrap">
+      <td className="truncate whitespace-nowrap px-3 py-2.5 align-top text-sm text-muted-foreground">
         {formatRelativeTime(ticket.created)}
       </td>
-      <td className="px-3 py-2.5 align-top text-sm text-muted-foreground whitespace-nowrap">
+      <td className="truncate whitespace-nowrap px-3 py-2.5 align-top text-sm text-muted-foreground">
         {formatRelativeTime(ticket.updated)}
       </td>
-      <td className="px-3 py-2.5 align-top text-sm text-muted-foreground whitespace-nowrap">
-        {ticket.dueDate
-          ? new Date(ticket.dueDate).toLocaleDateString()
-          : "—"}
+      <td className="truncate whitespace-nowrap px-3 py-2.5 align-top text-sm text-muted-foreground">
+        {formatDueDate(ticket.dueDate)}
       </td>
     </tr>
   );
@@ -295,13 +359,64 @@ export default function JiraTicketsPage() {
   );
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
-  const [statusFilter, setStatusFilter] = useState<Set<StatusCategory>>(
-    new Set(),
-  );
+  const searchParams = useSearchParams();
+  const [statusFilter, setStatusFilter] = useState<Set<StatusCategory>>(() => {
+    const raw = searchParams?.get("status") ?? "";
+    if (!raw) return new Set();
+    const valid: StatusCategory[] = ["todo", "inprogress", "done"];
+    const picked = raw
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter((s): s is StatusCategory =>
+        valid.includes(s as StatusCategory),
+      );
+    return new Set(picked);
+  });
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({
     key: "work",
     dir: "desc",
   });
+  const [columnWidths, setColumnWidths] = useState<Record<ColumnKey, number>>(
+    DEFAULT_COLUMN_WIDTHS,
+  );
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(COLUMN_WIDTHS_STORAGE_KEY);
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as Partial<Record<ColumnKey, number>>;
+      setColumnWidths((prev) => {
+        const next = { ...prev };
+        for (const k of Object.keys(parsed) as ColumnKey[]) {
+          const v = parsed[k];
+          if (typeof v === "number" && Number.isFinite(v)) {
+            next[k] = Math.max(MIN_COLUMN_WIDTH, v);
+          }
+        }
+        return next;
+      });
+    } catch {
+      // ignore corrupt entries
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        COLUMN_WIDTHS_STORAGE_KEY,
+        JSON.stringify(columnWidths),
+      );
+    } catch {
+      // ignore quota errors
+    }
+  }, [columnWidths]);
+
+  const resizeColumn = (id: ColumnKey, delta: number) => {
+    setColumnWidths((prev) => ({
+      ...prev,
+      [id]: Math.max(MIN_COLUMN_WIDTH, prev[id] + delta),
+    }));
+  };
 
   const onSort = (key: SortKey, defaultDir: SortDir) => {
     setSort((prev) =>
@@ -359,8 +474,6 @@ export default function JiraTicketsPage() {
           return compareNumbers(priorityRank(a.priority), priorityRank(b.priority), dir);
         case "status":
           return compareStrings(a.status, b.status, dir);
-        case "resolution":
-          return compareStrings(a.resolution, b.resolution, dir);
         case "created":
           return compareNumbers(dateValue(a.created), dateValue(b.created), dir);
         case "updated":
@@ -424,11 +537,13 @@ export default function JiraTicketsPage() {
 
   const [executeError, setExecuteError] = useState<string | null>(null);
   const [closeError, setCloseError] = useState<string | null>(null);
+  const [cloneError, setCloneError] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
   const [executing, setExecuting] = useState(false);
+  const [cloning, setCloning] = useState(false);
   const [pending, setPending] = useState<{
     keys: Set<string>;
-    action: "execute" | "close";
+    action: "execute" | "close" | "clone";
   } | null>(null);
 
   const closeOneTicket = async (
@@ -554,7 +669,48 @@ export default function JiraTicketsPage() {
     (p) => p.id === selectedProjectId,
   );
 
-  const onExecute = async () => {
+  const onCloneTicket = async () => {
+    setCloneError(null);
+    if (!singleSelected) {
+      setCloneError("Select exactly one ticket first.");
+      return;
+    }
+    const source = singleSelected;
+    setCloning(true);
+    setPending({ keys: new Set([source.key]), action: "clone" });
+    try {
+      const res = await fetch("/api/jira/clone", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceKey: source.key,
+          summary: source.summary,
+          description: source.description,
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        setCloneError(body?.error ?? `Clone failed (HTTP ${res.status})`);
+        return;
+      }
+      await refetch();
+    } catch (e) {
+      setCloneError(
+        `Failed to clone: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setCloning(false);
+      setPending((p) => {
+        if (!p) return p;
+        const remaining = new Set([...p.keys].filter((k) => k !== source.key));
+        return remaining.size === 0 ? null : { ...p, keys: remaining };
+      });
+    }
+  };
+
+  const onExecute = async (editor: "vscode" | "dbt-studio" = "vscode") => {
     setExecuteError(null);
     if (!selectedProject) {
       setExecuteError("Pick a project from the dropdown at the top first.");
@@ -574,6 +730,7 @@ export default function JiraTicketsPage() {
         body: JSON.stringify({
           projectName: selectedProject.name,
           ticket: singleSelected,
+          editor,
         }),
       });
       if (!res.ok) {
@@ -621,9 +778,13 @@ export default function JiraTicketsPage() {
       }
     } catch (e) {
       setExecuteError(
-        `Failed to launch VS Code: ${e instanceof Error ? e.message : String(e)}`,
+        `Failed to launch editor: ${e instanceof Error ? e.message : String(e)}`,
       );
-      setPending((p) => (p?.key === executedKey ? null : p));
+      setPending((p) => {
+        if (!p) return p;
+        const remaining = new Set([...p.keys].filter((k) => k !== executedKey));
+        return remaining.size === 0 ? null : { ...p, keys: remaining };
+      });
     } finally {
       setExecuting(false);
     }
@@ -819,13 +980,12 @@ export default function JiraTicketsPage() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="min-w-[220px]">
-              <DropdownMenuItem onSelect={() => void onExecute()}>
+              <DropdownMenuItem onSelect={() => void onExecute("vscode")}>
                 dbt VSCode Extension
               </DropdownMenuItem>
               <DropdownMenuItem
-                onSelect={() => {
-                  // placeholder for dbt Studio integration
-                }}
+                disabled
+                onSelect={(e) => e.preventDefault()}
               >
                 <span>dbt Studio</span>
                 <span className="ml-auto text-[10px] text-muted-foreground">
@@ -834,6 +994,26 @@ export default function JiraTicketsPage() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onCloneTicket}
+            disabled={!singleSelected || cloning}
+            title={
+              selectedTickets.length === 0
+                ? "Select a ticket"
+                : selectedTickets.length > 1
+                  ? "Select exactly one ticket"
+                  : `Clone ${singleSelected?.key} into the same project`
+            }
+          >
+            {cloning ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Copy className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            {cloning ? "Cloning…" : "Clone"}
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -890,13 +1070,35 @@ export default function JiraTicketsPage() {
         </div>
       )}
 
+      {cloneError && (
+        <div className="flex items-start gap-2 rounded-md border border-red-500/20 bg-red-500/5 p-3">
+          <AlertCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
+          <p className="text-xs text-red-600 dark:text-red-300">
+            {cloneError}
+          </p>
+        </div>
+      )}
+
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table
+              className="table-fixed text-sm"
+              style={{
+                width:
+                  columnWidths.select +
+                  COLUMNS.reduce((sum, c) => sum + columnWidths[c.id], 0),
+              }}
+            >
+              <colgroup>
+                <col style={{ width: columnWidths.select }} />
+                {COLUMNS.map((col) => (
+                  <col key={col.id} style={{ width: columnWidths[col.id] }} />
+                ))}
+              </colgroup>
               <thead>
                 <tr className="border-b bg-muted/40 text-left text-xs font-medium text-muted-foreground">
-                  <th className="w-10 px-3 py-2.5">
+                  <th className="px-3 py-2.5">
                     <input
                       type="checkbox"
                       aria-label="Select all"
@@ -922,7 +1124,7 @@ export default function JiraTicketsPage() {
                               : "descending"
                             : "none"
                         }
-                        className="whitespace-nowrap px-3 py-2.5 font-medium"
+                        className="relative overflow-hidden whitespace-nowrap px-3 py-2.5 font-medium"
                       >
                         <button
                           type="button"
@@ -934,6 +1136,9 @@ export default function JiraTicketsPage() {
                             className={`h-3 w-3 ${active ? "" : "opacity-40"}`}
                           />
                         </button>
+                        <ColumnResizer
+                          onResize={(delta) => resizeColumn(col.id, delta)}
+                        />
                       </th>
                     );
                   })}

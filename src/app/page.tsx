@@ -17,6 +17,8 @@ import {
   useAssets,
   useActivityEvents,
 } from "@/lib/hooks";
+import { useCapabilities } from "@/lib/hooks/use-platform";
+import { useJiraTicketsByJql } from "@/lib/hooks/use-jira";
 import { KpiStatCard } from "@/components/shared/kpi-stat-card";
 import { ApiSurfaceCallout } from "@/components/shared/api-surface-callout";
 import { DashboardSkeleton } from "@/components/shared/loading-skeleton";
@@ -35,6 +37,12 @@ export default function DashboardPage() {
   const runsQuery = useRuns();
   const assetsQuery = useAssets();
   const eventsQuery = useActivityEvents({ limit: 10 });
+  const capabilitiesQuery = useCapabilities();
+  const jiraConfigured = capabilitiesQuery.data?.jira ?? false;
+  const openTicketsQuery = useJiraTicketsByJql(
+    "statusCategory != Done",
+    jiraConfigured,
+  );
 
   const isLoading = projectsQuery.isLoading || environmentsQuery.isLoading;
 
@@ -160,11 +168,38 @@ export default function DashboardPage() {
       </div>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <div
+        className={`grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 ${jiraConfigured ? "xl:grid-cols-7" : "xl:grid-cols-6"}`}
+      >
         <KpiStatCard
           label="Total Projects"
           value={kpis.totalProjects}
         />
+        {jiraConfigured && (() => {
+          const ready =
+            !openTicketsQuery.isLoading && !openTicketsQuery.isError;
+          const count = openTicketsQuery.data?.length ?? 0;
+          const value = openTicketsQuery.isLoading
+            ? "…"
+            : openTicketsQuery.isError
+              ? "—"
+              : count >= 50
+                ? "50+"
+                : count;
+          const valueClassName = ready
+            ? count > 0
+              ? "text-red-600 dark:text-red-400"
+              : "text-green-600 dark:text-green-400"
+            : undefined;
+          return (
+            <KpiStatCard
+              label="Open Jira Tickets"
+              value={value}
+              valueClassName={valueClassName}
+              href="/jira-tickets?status=todo,inprogress"
+            />
+          );
+        })()}
         <KpiStatCard
           label="Environments"
           value={kpis.totalEnvironments}
